@@ -1,5 +1,7 @@
 package com.dm.unimove.ui.pages.menu
 
+import android.R.attr.text
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -27,6 +30,7 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -39,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +72,8 @@ fun LocationSelector(
     locationName: String,
     onNameChange: (String) -> Unit,
     currentLatLng: LatLng,
+    isLocationSet: Boolean,
+    showError: Boolean,
     onLocationSelected: (LatLng) -> Unit
 ) {
     var showMapDialog by remember { mutableStateOf(false) }
@@ -77,10 +84,28 @@ fun LocationSelector(
             onValueChange = onNameChange,
             label = { Text(label) },
             modifier = Modifier.fillMaxWidth(),
+            isError = showError,
+            placeholder = { Text("Ex: Entrada do IFPE") },
+            supportingText = {
+                if (isLocationSet) {
+                    Text(
+                        "📍 Coordenadas capturadas: ${"%.4f".format(currentLatLng.latitude)}, ${"%.4f".format(currentLatLng.longitude)}",
+                        color = Color(0xFF4CAF50)
+                    )
+                } else {
+                    Text("Clique no ícone ao lado para marcar no mapa")
+                }
+            },
             // Ícone que indica que o mapa pode ser aberto
             trailingIcon = {
                 IconButton(onClick = { showMapDialog = true }) {
-                    Icon(Icons.Default.LocationOn, contentDescription = "Abrir mapa", tint = CustomColors.BrightPurple)
+                    Icon(
+                        imageVector = if (isLocationSet) Icons.Default.Check else Icons.Default.LocationOn,
+                        contentDescription = null,
+                        tint = if (isLocationSet) Color(0xFF4CAF50)
+                        else if (showError) MaterialTheme.colorScheme.error
+                        else CustomColors.BrightPurple
+                    )
                 }
             }
         )
@@ -111,6 +136,9 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
     var destCoords by remember { mutableStateOf(GeoPoint(0.0, 0.0)) }
     var destLatLng by remember { mutableStateOf(LatLng(-8.0476, -34.8770)) }
 
+    var isStartLatLngSet by remember { mutableStateOf(false) } // Flag de validação
+    var isDestLatLngSet by remember { mutableStateOf(false) }
+
     var selectedTimestamp by remember { mutableStateOf<Timestamp?>(null) }
     var selectedOccasion by remember { mutableStateOf(Occasion.ONE_WAY) }
     var selectedPayment by remember { mutableStateOf(PaymentType.FREE) }
@@ -124,6 +152,8 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
     val timePickerState = rememberTimePickerState()
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
+
+    var attemptPublish by remember { mutableStateOf(false) } // Gatilho para mostrar erros
 
     Scaffold(
         topBar = {
@@ -155,26 +185,38 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
         ) {
             item {
                 LocationSelector(
-                    label = "Local de Destino",
-                    locationName = destLocationName,
-                    onNameChange = { destLocationName = it },
-                    currentLatLng = destLatLng,
-                    onLocationSelected = { destLatLng = it }
+                    label = "Ponto de Partida",
+                    locationName = startLocationName,
+                    onNameChange = { startLocationName = it },
+                    currentLatLng = startLatLng,
+                    isLocationSet = isStartLatLngSet,
+                    showError = attemptPublish && (startLocationName.isBlank() || !isStartLatLngSet),
+                    onLocationSelected = {
+                        startLatLng = it
+                        isStartLatLngSet = true
+                    }
                 )
             }
 
             item {
                 LocationSelector(
-                    label = "Ponto de Partida",
-                    locationName = startLocationName,
-                    onNameChange = { startLocationName = it },
-                    currentLatLng = startLatLng,
-                    onLocationSelected = { startLatLng = it }
+                    label = "Ponto de Destino",
+                    locationName = destLocationName,
+                    onNameChange = { destLocationName = it },
+                    currentLatLng = destLatLng,
+                    isLocationSet = isDestLatLngSet,
+                    showError = attemptPublish && (destLocationName.isBlank() || !isDestLatLngSet),
+                    onLocationSelected = {
+                        destLatLng = it
+                        isDestLatLngSet = true
+                    }
                 )
             }
 
             item {
-                // Diálogos de Data e Hora
+                val dateError = attemptPublish && selectedTimestamp == null
+
+                // Manter os diálogos aqui em cima para o botão conseguir acessá-los
                 if (showDatePicker) {
                     DatePickerDialog(
                         onDismissRequest = { showDatePicker = false },
@@ -205,16 +247,43 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
                     )
                 }
 
-                Button(
-                    onClick = { showDatePicker = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F0F5), contentColor = Color.Black),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    val displayDate = selectedTimestamp?.toDate()?.let {
-                        java.text.SimpleDateFormat("dd/MM/yyyy 'às' HH:mm", java.util.Locale.getDefault()).format(it)
-                    } ?: "Selecionar Data e Hora"
-                    Text(displayDate)
+                // O ÚNICO Botão de Data e Hora
+                Column {
+                    Button(
+                        onClick = { showDatePicker = true }, // Agora ele volta a abrir o diálogo
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFF1F0F5),
+                            contentColor = if (dateError) Color.Red else Color.Black
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        border = if (dateError) BorderStroke(2.dp, Color.Red) else null
+                    ) {
+                        val displayDate = selectedTimestamp?.toDate()?.let {
+                            java.text.SimpleDateFormat("dd/MM/yyyy 'às' HH:mm", java.util.Locale.getDefault()).format(it)
+                        } ?: "Selecionar Data e Hora"
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(displayDate)
+                        }
+                    }
+
+                    if (dateError) {
+                        Text(
+                            text = "Campo obrigatório",
+                            color = Color.Red,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(start = 8.dp, top = 4.dp)
+                        )
+                    }
                 }
             }
 
@@ -288,6 +357,7 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
                     value = vehicleModel,
                     onValueChange = { vehicleModel = it },
                     label = { Text("Modelo do Veículo") },
+                    isError = attemptPublish && vehicleModel.isBlank(),
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -297,6 +367,7 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
                     value = totalSeats,
                     onValueChange = { totalSeats = it },
                     label = { Text("Total de Vagas") },
+                    isError = attemptPublish && totalSeats.isBlank(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -307,6 +378,7 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
                     value = description,
                     onValueChange = { description = it },
                     label = { Text("Descrição/Recados") },
+                    isError = attemptPublish && description.isBlank(),
                     modifier = Modifier.fillMaxWidth().height(100.dp)
                 )
             }
@@ -314,13 +386,34 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
             item {
                 Button(
                     onClick = {
+                        attemptPublish = true // Isso dispara a borda vermelha em todos os componentes vazios
+
+                        val isFormValid = startLocationName.isNotBlank() &&
+                                destLocationName.isNotBlank() &&
+                                isStartLatLngSet &&
+                                isDestLatLngSet &&
+                                vehicleModel.isNotBlank() &&
+                                selectedTimestamp != null
+
+                        if (!isFormValid) {
+                            Toast.makeText(context, "Por favor, preencha todos os campos e selecione os locais no mapa!", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+
                         val userUid = FirebaseAuth.getInstance().currentUser?.uid
                         if (userUid != null && viewModel.canUserStartNewActivity()) {
                             viewModel.updateUserBusyStatus(userUid, true)
                             val newRide = Ride(
-                                driver_ref = FirebaseFirestore.getInstance().collection("USERS").document(userUid),
-                                starting_point = Location(startLocationName, GeoPoint(startLatLng.latitude, startLatLng.longitude)),
-                                destination = Location(destLocationName, GeoPoint(destLatLng.latitude, destLatLng.longitude)),
+                                driver_ref = FirebaseFirestore.getInstance().collection("USERS")
+                                    .document(userUid),
+                                starting_point = Location(
+                                    startLocationName,
+                                    GeoPoint(startLatLng.latitude, startLatLng.longitude)
+                                ),
+                                destination = Location(
+                                    destLocationName,
+                                    GeoPoint(destLatLng.latitude, destLatLng.longitude)
+                                ),
                                 date_time = selectedTimestamp ?: Timestamp.now(),
                                 occasion = selectedOccasion,
                                 payment_type = selectedPayment,
@@ -332,6 +425,8 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
                             )
                             viewModel.createNewRide(newRide)
                             navController.popBackStack()
+                        } else {
+                            Toast.makeText(context, "Você já possui uma carona em andamento!", Toast.LENGTH_SHORT).show()
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(56.dp),

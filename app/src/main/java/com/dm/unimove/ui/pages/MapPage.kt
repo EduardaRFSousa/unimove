@@ -4,6 +4,8 @@ import com.dm.unimove.R
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,6 +48,7 @@ import com.dm.unimove.model.MainViewModel
 import com.dm.unimove.model.Ride
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
@@ -56,6 +59,12 @@ import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
+
+fun getResizedIcon(context: android.content.Context, resourceId: Int, width: Int, height: Int): BitmapDescriptor {
+    val imageBitmap = BitmapFactory.decodeResource(context.resources, resourceId)
+    val resizedBitmap = Bitmap.createScaledBitmap(imageBitmap, width, height, false)
+    return BitmapDescriptorFactory.fromBitmap(resizedBitmap)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,11 +133,14 @@ fun MapPage(modifier: Modifier = Modifier, viewModel: MainViewModel) {
         properties = MapProperties(isMyLocationEnabled = hasLocationPermission),
         uiSettings = MapUiSettings(myLocationButtonEnabled = true)
     ) {
-        // Definimos o ícone aqui dentro, onde é SEGURO
-        val carIcon = try {
-            BitmapDescriptorFactory.fromResource(R.drawable.ic_car_marker)
-        } catch (e: Exception) {
-            null // Se falhar, deixamos nulo para usar o padrão sem crashar
+
+        val sizeInPx = (48 * context.resources.displayMetrics.density).toInt() // 48dp transformado em pixels
+        val carIcon = remember(context) {
+            try {
+                getResizedIcon(context, R.drawable.ic_car_marker, sizeInPx, sizeInPx)
+            } catch (e: Exception) {
+                null
+            }
         }
 
         rides.forEach { (docId, ride) ->
