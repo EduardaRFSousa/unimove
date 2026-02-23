@@ -1,16 +1,31 @@
 package com.dm.unimove.model
 
+import android.app.Application
 import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.dm.unimove.db.local.AppDatabase
+import com.dm.unimove.db.local.SolicitationEntity
+import com.dm.unimove.db.local.toEntity
+import com.dm.unimove.db.local.toRide
+import com.dm.unimove.db.local.toUser
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.firestore
+import kotlinx.coroutines.launch
 
-class MainViewModel : ViewModel() {
+class MainViewModel(application: Application) : AndroidViewModel(application) {
+
     private val db = Firebase.firestore
+
+    // ── Room DAOs (cache local) ───────────────────────────────────────────────
+    private val roomDb = AppDatabase.getInstance(application)
+    private val rideDao = roomDb.rideDao()
+    private val userDao = roomDb.userDao()
+    private val solicitationDao = roomDb.solicitationDao()
 
     // Estado do Usuário Logado
     private val _user = mutableStateOf<User?>(null)
@@ -43,13 +58,27 @@ class MainViewModel : ViewModel() {
                         .document(docRef.id)
                         .set(mapOf("ride_ref" to docRef)) // Guarda a referência direta
                 }
+                // Salva no cache local após sucesso no Firestore
+                viewModelScope.launch {
+                    rideDao.insert(ride.toEntity(docRef.id))
+                }
             }
     }
 
     /**
      * Busca todas as caronas com status AVAILABLE para mostrar no mapa.
+     * Estratégia offline-first: carrega do Room imediatamente, depois sincroniza com Firebase.
      */
     fun fetchAvailableRides() {
+        // 1. Carrega do cache local instantaneamente (funciona offline)
+        viewModelScope.launch {
+            val cached = rideDao.getAvailableOnce()
+            if (cached.isNotEmpty()) {
+                _availableRides.value = cached.map { entity -> entity.id to entity.toRide() }
+            }
+        }
+
+        // 2. Escuta o Firebase em tempo real e atualiza Room + UI
         db.collection("CARONAS")
             .whereEqualTo("status", RideStatus.AVAILABLE.name)
             .addSnapshotListener { value, error ->
@@ -59,14 +88,31 @@ class MainViewModel : ViewModel() {
                     if (ride != null) doc.id to ride else null
                 }
                 _availableRides.value = list ?: emptyList()
+
+                // Atualiza o cache local com os dados mais recentes
+                viewModelScope.launch {
+                    list?.let { pairs ->
+                        rideDao.insertAll(pairs.map { (id, ride) -> ride.toEntity(id) })
+                    }
+                }
             }
     }
 
     /**
      * Carrega os dados do perfil do usuário do Firestore.
      * Chamado logo após o login ou na inicialização.
+     * Estratégia offline-first: carrega do Room imediatamente, depois sincroniza com Firebase.
      */
     fun loadUserProfile(userId: String) {
+        // 1. Carrega do cache local instantaneamente (funciona offline)
+        viewModelScope.launch {
+            val cached = userDao.getByIdOnce(userId)
+            if (cached != null) {
+                _user.value = cached.toUser()
+            }
+        }
+
+        // 2. Escuta o Firebase e atualiza Room + UI
         db.collection("USERS").document(userId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -75,7 +121,13 @@ class MainViewModel : ViewModel() {
                 }
 
                 if (snapshot != null && snapshot.exists()) {
-                    _user.value = snapshot.toObject(User::class.java)
+                    val fetchedUser = snapshot.toObject(User::class.java)
+                    _user.value = fetchedUser
+
+                    // Atualiza o cache local com os dados mais recentes
+                    viewModelScope.launch {
+                        fetchedUser?.let { userDao.insert(it.toEntity(userId)) }
+                    }
                 }
             }
     }
@@ -95,6 +147,10 @@ class MainViewModel : ViewModel() {
             .set(user)
             .addOnSuccessListener {
                 Log.d("Firestore", "Perfil do usuário atualizado com sucesso!")
+                // Salva no cache local após sucesso no Firestore
+                viewModelScope.launch {
+                    userDao.insert(user.toEntity(userId))
+                }
             }
     }
 
@@ -106,7 +162,16 @@ class MainViewModel : ViewModel() {
     fun updateUserBusyStatus(userId: String, busy: Boolean) {
         db.collection("USERS").document(userId)
             .update("is_busy", busy)
-            .addOnSuccessListener { Log.d("Firestore", "Status de ocupação atualizado: $busy") }
+            .addOnSuccessListener {
+                Log.d("Firestore", "Status de ocupação atualizado: $busy")
+                // Atualiza o cache local
+                viewModelScope.launch {
+                    val cached = userDao.getByIdOnce(userId)
+                    if (cached != null) {
+                        userDao.insert(cached.copy(is_busy = busy))
+                    }
+                }
+            }
     }
 
     fun sendRideSolicitation(ride: Ride, rideId: String, passengerId: String) {
@@ -130,8 +195,21 @@ class MainViewModel : ViewModel() {
 
         db.collection("SOLICITACOES")
             .add(solicitation)
-            .addOnSuccessListener {
+            .addOnSuccessListener { docRef ->
                 Log.d("Firestore", "Solicitação enviada!")
+                // Salva no cache local após sucesso no Firestore
+                viewModelScope.launch {
+                    solicitationDao.insert(
+                        SolicitationEntity(
+                            id = docRef.id,
+                            ride_id = rideId,
+                            passenger_id = passengerId,
+                            driver_id = ride.driver_ref?.id ?: "",
+                            status = "PENDING",
+                            sincronizado = true
+                        )
+                    )
+                }
             }
             .addOnFailureListener { e ->
                 Log.e("Firestore", "Erro ao enviar solicitação", e)
@@ -146,7 +224,15 @@ class MainViewModel : ViewModel() {
                     val userId = task.result?.user?.uid
                     if (userId != null) {
                         db.collection("USERS").document(userId)
-                            .set(user).addOnSuccessListener { onComplete(true, null) }.addOnFailureListener { e -> onComplete(false, e.message) }
+                            .set(user)
+                            .addOnSuccessListener {
+                                // Salva no cache local após sucesso no Firestore
+                                viewModelScope.launch {
+                                    userDao.insert(user.toEntity(userId))
+                                }
+                                onComplete(true, null)
+                            }
+                            .addOnFailureListener { e -> onComplete(false, e.message) }
                     }
                 } else {
                     onComplete(false, task.exception?.message)
@@ -162,8 +248,14 @@ class MainViewModel : ViewModel() {
             .addSnapshotListener { snapshot, _ ->
                 val doc = snapshot?.documents?.firstOrNull()
                 if (doc != null) {
-                    _activeRide.value = doc.id to doc.toObject(Ride::class.java)!!
+                    val ride = doc.toObject(Ride::class.java)!!
+                    _activeRide.value = doc.id to ride
                     fetchSolicitationsForRide(doc.id) // Se é motorista, busca quem pediu carona
+
+                    // Salva no cache local
+                    viewModelScope.launch {
+                        rideDao.insert(ride.toEntity(doc.id))
+                    }
                 } else {
                     // 2. Se não achou como motorista, procura como PASSAGEIRO aceito
                     // TODO: Implementar lógica de busca em SOLICITACOES com status 'ACCEPTED'
@@ -192,6 +284,10 @@ class MainViewModel : ViewModel() {
         batch.commit().addOnSuccessListener {
             updateUserBusyStatus(passengerId, true)
             Log.d("Firestore", "Passageiro aceito e bloqueado para novas ações.")
+            // Atualiza o cache local
+            viewModelScope.launch {
+                solicitationDao.updateStatus(solicitationId, "ACCEPTED")
+            }
         }
     }
 
@@ -201,6 +297,10 @@ class MainViewModel : ViewModel() {
             .addOnSuccessListener {
                 // Liberamos o passageiro para pedir outra carona se ele for rejeitado
                 updateUserBusyStatus(passengerId, false)
+                // Atualiza o cache local
+                viewModelScope.launch {
+                    solicitationDao.updateStatus(solicitationId, "REJECTED")
+                }
             }
     }
 
@@ -214,6 +314,22 @@ class MainViewModel : ViewModel() {
                     rideRef?.id
                 }?.toSet()
                 _userSolicitadosIds.value = ids ?: emptySet()
+
+                // Salva solicitações no cache local
+                viewModelScope.launch {
+                    snapshot?.documents?.forEach { doc ->
+                        solicitationDao.insert(
+                            SolicitationEntity(
+                                id = doc.id,
+                                ride_id = (doc.get("ride_id") as? DocumentReference)?.id ?: "",
+                                passenger_id = userId,
+                                driver_id = (doc.get("driver_ref") as? DocumentReference)?.id ?: "",
+                                status = doc.getString("status") ?: "PENDING",
+                                sincronizado = true
+                            )
+                        )
+                    }
+                }
             }
     }
 }

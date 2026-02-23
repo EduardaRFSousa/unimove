@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     id("org.jetbrains.kotlin.plugin.serialization") version "2.2.20"
-    id ("com.google.android.libraries.mapsplatform.secrets-gradle-plugin")
+    id("com.google.android.libraries.mapsplatform.secrets-gradle-plugin")
     alias(libs.plugins.google.gms.google.services)
     id("com.google.devtools.ksp") version "2.3.4"
 }
@@ -94,6 +94,6 @@ dependencies {
 
     val room_version = "2.8.4"
     implementation("androidx.room:room-runtime:$room_version")
-    implementation("androidx.room:room-ktx:$room_version")
+    implementation("androidx.room:room-ktx:$room_version") // suporte a coroutines
     ksp("androidx.room:room-compiler:$room_version")
 }
