@@ -2,11 +2,14 @@ package com.dm.unimove.model
 
 import android.util.Log
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.firestore
 
 class MainViewModel : ViewModel() {
@@ -215,5 +218,35 @@ class MainViewModel : ViewModel() {
                 }?.toSet()
                 _userSolicitadosIds.value = ids ?: emptySet()
             }
+    }
+
+    // MainViewModel.kt
+
+    // Estado para armazenar o assento que o usuário clicou temporariamente
+    var selectedSeatKey by mutableStateOf<String?>(null)
+        private set
+
+    fun selectSeat(seatKey: String) {
+        selectedSeatKey = seatKey
+    }
+
+    fun confirmRideWithSeat(rideId: String, passengerId: String) {
+        val seatKey = selectedSeatKey ?: return
+        val userRef = db.collection("USERS").document(passengerId)
+        val rideRef = db.collection("CARONAS").document(rideId)
+
+        db.runTransaction { transaction ->
+            val snapshot = transaction.get(rideRef)
+            val currentSeats = snapshot.get("seats_map") as? Map<String, Any?> ?: emptyMap()
+
+            // Verifica se o assento ainda está vago antes de confirmar
+            if (currentSeats[seatKey] == null) {
+                transaction.update(rideRef, "seats_map.$seatKey", userRef)
+                // Também adiciona à lista geral de passageiros para histórico
+                transaction.update(rideRef, "passenger_refs", FieldValue.arrayUnion(userRef))
+            }
+        }.addOnSuccessListener {
+            // Limpa a seleção e volta para o mapa ou tela de sucesso
+        }
     }
 }

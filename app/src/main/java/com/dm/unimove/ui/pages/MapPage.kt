@@ -44,8 +44,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.navigation.compose.rememberNavController
 import com.dm.unimove.model.MainViewModel
 import com.dm.unimove.model.Ride
+import com.dm.unimove.ui.nav.Route
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.BitmapDescriptor
@@ -79,6 +81,7 @@ fun MapPage(modifier: Modifier = Modifier, viewModel: MainViewModel) {
     var selectedRideData by remember { mutableStateOf<Pair<String, Ride>?>(null) }
     val user = FirebaseAuth.getInstance().currentUser
     var driverName by remember { mutableStateOf("Carregando...") }
+    val navController = rememberNavController()
 
     LaunchedEffect(selectedRideData) {
         selectedRideData?.let { (_, ride) ->
@@ -238,7 +241,10 @@ fun MapPage(modifier: Modifier = Modifier, viewModel: MainViewModel) {
 
                 // Botão "Mais informações" Azul claro
                 Button(
-                    onClick = { /* Detalhes */ },
+                    onClick = {
+                        showBottomSheet = false
+                        // Navega para a MoreInfoPage passando os dados da carona
+                        navController.navigate(Route.RideDetails(ride = ride)) },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF90CAF9)),
                     shape = RoundedCornerShape(16.dp)

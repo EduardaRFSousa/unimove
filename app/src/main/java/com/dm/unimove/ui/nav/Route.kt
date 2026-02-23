@@ -12,4 +12,6 @@ sealed class Route {
     object List : Route()
     @Serializable
     object CreateRide : Route()
+    @Serializable
+    object RideDetails : Route()
 }

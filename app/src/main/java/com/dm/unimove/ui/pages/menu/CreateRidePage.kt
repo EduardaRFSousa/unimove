@@ -153,7 +153,7 @@ fun CreateRidePage(viewModel: MainViewModel, navController: NavController) {
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
 
-    var attemptPublish by remember { mutableStateOf(false) } // Gatilho para mostrar erros
+    var attemptPublish by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
