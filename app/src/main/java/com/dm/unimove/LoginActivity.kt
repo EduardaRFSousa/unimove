@@ -146,24 +146,6 @@ fun LoginPage(modifier: Modifier = Modifier, viewModel : MainViewModel = viewMod
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Opções (Lembrar e Esqueceu)
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 0.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(modifier = Modifier.offset(x = (-8).dp), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = rememberMe,
-                            onCheckedChange = { rememberMe = it }
-                        )
-                        Text("Lembre-se de mim", style = MaterialTheme.typography.labelMedium)
-                    }
-                    TextButton(onClick = { /* TODO: Implementar recuperação de senha */ }, modifier = Modifier.offset(x = 8.dp)) {
-                        Text("Esqueceu sua senha?", style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(3.dp))
 
                 Button(

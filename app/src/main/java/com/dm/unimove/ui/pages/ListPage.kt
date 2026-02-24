@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,10 +29,21 @@ import com.dm.unimove.model.Occasion
 import com.dm.unimove.model.Ride
 import java.text.SimpleDateFormat
 import java.util.Locale
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.navigation.NavController
+import com.dm.unimove.R
+import com.dm.unimove.model.RideStatus
+import com.dm.unimove.ui.nav.Route
+import com.google.firebase.auth.FirebaseAuth
 
 @Composable
 fun RideHistoryItem(
     ride: Ride,
+    navController: NavController,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -40,65 +52,60 @@ fun RideHistoryItem(
             .padding(vertical = 12.dp, horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // TODO: Imagem do Carro
-        /* Image(
-            painter = painterResource(id = R.drawable.ic_car_black),
+        // Imagem do carro ao lado (usando o ic_car_marker ou similar)
+        Image(
+            painter = painterResource(id = R.drawable.ic_car_marker),
             contentDescription = "Carro",
-            modifier = Modifier.size(80.dp)
-        ) */
+            modifier = Modifier.size(70.dp)
+        )
 
-        Spacer(modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Motorista: ${ride.vehicle_model}",
+                text = "Veículo: ${ride.vehicle_model}",
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp
             )
             Text(
-                text = "Destino:",
+                text = "Destino: ${ride.destination.name}",
                 color = Color(0xFF6200EE),
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp
-            )
-            Text(
-                text = ride.destination.name,
-                color = Color(0xFF6200EE),
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
                 fontSize = 18.sp
             )
 
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Ponto de partida: ${ride.starting_point.name}",
-                fontSize = 12.sp,
-                color = Color.Gray
+                text = "Partida: ${ride.starting_point.name}",
+                fontSize = 13.sp,
+                color = Color.DarkGray
             )
 
-            // Formatação da data e ocasião
             val dateStr = ride.date_time?.toDate()?.let {
-                SimpleDateFormat("dd/MM 'às' HH'h'mm", Locale("pt", "BR")).format(it)
+                SimpleDateFormat("dd/MM 'às' HH:mm", Locale.getDefault()).format(it)
             } ?: ""
 
             Text(
                 text = "$dateStr, ${if(ride.occasion == Occasion.ONE_WAY) "somente ida" else "ida e volta"}",
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 color = Color.Gray
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Botão "Mais informações"
             Surface(
                 shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF8C9EFF),
-                modifier = Modifier.clickable { /* Abrir detalhes */ }
+                color = Color(0xFF90CAF9),
+                modifier = Modifier.clickable {
+                    navController.navigate(Route.RideDetails(rideId = ride.id))
+                }
             ) {
                 Text(
                     text = "••• Mais informações",
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                     color = Color.White,
+                    fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
                 )
             }
@@ -109,36 +116,113 @@ fun RideHistoryItem(
 @Composable
 fun ListPage(
     modifier: Modifier = Modifier,
-    viewModel: MainViewModel
+    viewModel: MainViewModel,
+    navController: NavController
 ) {
-    val rideList by viewModel.availableRides
+    val allRides by viewModel.availableRides
+    val solicitadosIds by viewModel.userSolicitadosIds
+    val userUid = FirebaseAuth.getInstance().currentUser?.uid
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(top = 16.dp)
-    ) {
-        Text(
-            text = "Caronas anteriores",
-            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF6200EE)
-        )
+    // 1. CARONA ATUAL
+    val currentRide = allRides.filter { (_, ride) ->
+        val isActive = ride.status == RideStatus.ON_GOING || ride.status == RideStatus.AVAILABLE
 
-        Divider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
+        // Verifica se o usuário logado é o motorista
+        val isDriver = ride.driver_ref?.id == userUid
 
+        // Verifica se o usuário logado está na lista de passageiros
+        val isPassenger = ride.passenger_refs.any { it.id == userUid }
+
+        isActive && (isDriver || isPassenger)
+    }
+
+    // 2. SOLICITAÇÕES (Só aparecem se NÃO houver carona atual)
+    val solicitations = if (currentRide.isEmpty()) {
+        allRides.filter { (id, _) -> solicitadosIds.contains(id) }
+    } else {
+        emptyList()
+    }
+
+    // 3. CARONAS ANTERIORES
+    val pastRides = allRides.filter { (_, ride) ->
+        (ride.status == RideStatus.FINISHED || ride.status == RideStatus.CANCELED) &&
+                ride.passenger_refs.any { it.id == userUid }
+    }
+
+    // Lógica para verificar se a página inteira está vazia
+    val isEmpty = currentRide.isEmpty() && solicitations.isEmpty() && pastRides.isEmpty()
+
+    if (isEmpty) {
+        EmptyHistoryState(modifier)
+    } else {
         LazyColumn(
-            modifier = Modifier.fillMaxSize()
+            modifier = modifier.fillMaxSize().padding(top = 16.dp)
         ) {
-            items(rideList) { (docId, rideObject) ->
-                RideHistoryItem(ride = rideObject)
-                Divider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    thickness = 0.5.dp,
-                    color = Color.LightGray
-                )
+            if (currentRide.isNotEmpty()) {
+                item { SectionHeader("Carona em Andamento") }
+                items(currentRide) { (_, ride) ->
+                    RideHistoryItem(ride = ride,
+                        navController = navController)
+                    Divider(Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
+                }
+            }
+
+            if (solicitations.isNotEmpty()) {
+                item { SectionHeader("Minhas Solicitações") }
+                items(solicitations) { (_, ride) ->
+                    RideHistoryItem(ride = ride,
+                        navController = navController)
+                    Divider(Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
+                }
+            }
+
+            if (pastRides.isNotEmpty()) {
+                item { SectionHeader("Caronas Anteriores") }
+                items(pastRides) { (_, ride) ->
+                    RideHistoryItem(ride = ride,
+                        navController = navController)
+                    Divider(Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
+                }
             }
         }
+    }
+}
+
+@Composable
+fun EmptyHistoryState(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            painter = painterResource(id = R.drawable.ic_car_marker), // Usando seu ícone de carro
+            contentDescription = null,
+            modifier = Modifier.size(100.dp),
+            tint = Color.LightGray
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = "Você ainda não possui histórico de caronas!",
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+            color = Color.Gray,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 32.dp)
+        )
+    }
+}
+
+@Composable
+fun SectionHeader(title: String) {
+    Column {
+        Text(
+            text = title,
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
+            fontSize = 18.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = Color(0xFF6200EE)
+        )
+        Divider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 1.dp, color = Color(0xFF6200EE))
     }
 }

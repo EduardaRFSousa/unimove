@@ -28,11 +28,11 @@ fun MainNavHost(
         }
 
         composable<Route.Ride> {
-            RidePage(viewModel = viewModel)
+            RidePage(viewModel = viewModel, navController = navController)
         }
 
         composable<Route.List> {
-            ListPage(viewModel = viewModel)
+            ListPage(viewModel = viewModel, navController = navController)
         }
 
         composable<Route.CreateRide> {

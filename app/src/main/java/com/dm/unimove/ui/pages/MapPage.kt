@@ -256,11 +256,9 @@ fun MapPage(
                     enabled = !isBusy && !jaSolicitou,
                     onClick = {
                         if (!isBusy) {
-                            user?.let { currentUser ->
-                                viewModel.sendRideSolicitation(ride, currentRideId, currentUser.uid)
-                                showBottomSheet = false
-                                Toast.makeText(context, "Solicitação enviada!", Toast.LENGTH_SHORT).show()
-                            }
+                            showBottomSheet = false
+                            // Agora redireciona para a página de escolha de assento em vez de enviar
+                            navController.navigate(Route.RideSchedule(rideId = ride.id))
                         }
                     },
                     modifier = Modifier

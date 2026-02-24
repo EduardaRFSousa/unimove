@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -37,26 +38,32 @@ import com.dm.unimove.model.Ride
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentReference
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.navigation.NavController
+import com.dm.unimove.ui.nav.Route
 
 @Preview
 @Composable
-fun RidePage(modifier: Modifier = Modifier, viewModel: MainViewModel) {
+fun RidePage(
+    modifier: Modifier = Modifier,
+    viewModel: MainViewModel,
+    navController: NavController // Adicionado o navController
+) {
     val activeRideData by viewModel.activeRide
     val solicitations by viewModel.pendingSolicitations
     val currentUser = FirebaseAuth.getInstance().currentUser
 
-    // Gatilho para buscar dados ao abrir a página
     LaunchedEffect(currentUser) {
         currentUser?.let { viewModel.fetchActiveRide(it.uid) }
     }
 
     if (activeRideData == null) {
-        // ESTADO DEFAULT: Nenhuma carona
         EmptyRideState(modifier)
     } else {
         val (rideId, ride) = activeRideData!!
-
-        // Verifica se o usuário logado é o motorista da carona encontrada
         val isDriver = ride.driver_ref?.id == currentUser?.uid
 
         if (isDriver) {
@@ -64,10 +71,11 @@ fun RidePage(modifier: Modifier = Modifier, viewModel: MainViewModel) {
                 ride = ride,
                 solicitations = solicitations,
                 viewModel = viewModel,
-                rideId = rideId // Passando o ID capturado acima
+                rideId = rideId
             )
         } else {
-            PassengerInterface(ride)
+            // Repassando o rideId e navController para o redirecionamento
+            PassengerInterface(ride, rideId, navController)
         }
     }
 }
@@ -82,25 +90,63 @@ fun SolicitationItem(
     val passengerRef = data["passenger_ref"] as? DocumentReference
     val passengerId = passengerRef?.id ?: ""
 
-    // Idealmente, você buscaria o nome do passageiro aqui ou no ViewModel
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text("Passageiro: ${passengerId.take(5)}...") // Exemplo com ID curto
+    // CORREÇÃO: Pegando o valor do mapa com a chave correta
+    val tempSeat = data["selected_seat"] as? String ?: "Não informado"
 
-        Row {
-            IconButton(onClick = { viewModel.rejectPassenger(solicId, passengerId) }) {
-                Icon(Icons.Default.Close, contentDescription = "Rejeitar", tint = Color.Red)
+    var passengerName by remember { mutableStateOf("Carregando...") }
+
+    // Busca o nome do passageiro de forma assíncrona
+    LaunchedEffect(passengerId) {
+        if (passengerId.isNotEmpty()) {
+            passengerRef?.get()?.addOnSuccessListener { snapshot ->
+                passengerName = snapshot.getString("name") ?: "Usuário Desconhecido"
             }
-            IconButton(onClick = { viewModel.acceptPassenger(solicId, rideId, passengerId) }) {
-                Icon(Icons.Default.Check, contentDescription = "Aceitar", tint = Color(0xFF4CAF50))
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                // Ícone de usuário para o passageiro
+                Icon(
+                    imageVector = Icons.Default.AccountCircle,
+                    contentDescription = null,
+                    tint = Color(0xFF9575CD),
+                    modifier = Modifier.size(40.dp)
+                )
+
+                Spacer(Modifier.width(12.dp))
+
+                Column {
+                    Text(text = passengerName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    // Tratamento visual para o nome do assento
+                    Text(
+                        text = "Assento: ${tempSeat.replace("-", " ").uppercase()}",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                }
+            }
+
+            Row {
+                IconButton(onClick = { viewModel.rejectPassenger(solicId, passengerId) }) {
+                    Icon(Icons.Default.Close, contentDescription = "Rejeitar", tint = Color.Red)
+                }
+                IconButton(onClick = { viewModel.acceptPassenger(solicId, rideId, passengerId) }) {
+                    Icon(Icons.Default.Check, contentDescription = "Aceitar", tint = Color(0xFF4CAF50))
+                }
             }
         }
     }
 }
-
 @Composable
 fun EmptyRideState(modifier: Modifier = Modifier) {
     Column(
@@ -127,9 +173,20 @@ fun EmptyRideState(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun PassengerInterface(ride: Ride) {
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Text("Sua Carona (Passageiro)", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+fun PassengerInterface(ride: Ride, rideId: String, navController: NavController) {
+    // Redirecionamento automático ao carregar a página
+    LaunchedEffect(rideId) {
+        navController.navigate(Route.RideDetails(rideId = rideId)) {
+            // Limpa o histórico para que o 'voltar' não caia num loop na RidePage
+            popUpTo(Route.Ride) { inclusive = true }
+        }
+    }
+
+    // Enquanto redireciona, mostramos um carregamento ou o card básico
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Carona confirmada!", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+        Text("Redirecionando para detalhes...", color = Color.Gray)
+
         Card(
             modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -137,13 +194,9 @@ fun PassengerInterface(ride: Ride) {
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Destino: ${ride.destination.name}", fontWeight = FontWeight.Bold, color = Color(0xFF6200EE))
-                Text("Partida: ${ride.starting_point.name}")
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text("Modelo: ${ride.vehicle_model}")
-                Text("Status da Carona: ${ride.status}")
             }
         }
-        // Botão para cancelar ou falar com motorista (opcional)
     }
 }
 

@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.firestore
 
 class MainViewModel : ViewModel() {
@@ -25,7 +26,8 @@ class MainViewModel : ViewModel() {
     private val _activeRide = mutableStateOf<Pair<String, Ride>?>(null)
     val activeRide: State<Pair<String, Ride>?> = _activeRide
 
-    private val _pendingSolicitations = mutableStateOf<List<Pair<String, Map<String, Any>>>>(emptyList())
+    private val _pendingSolicitations =
+        mutableStateOf<List<Pair<String, Map<String, Any>>>>(emptyList())
     val pendingSolicitations: State<List<Pair<String, Map<String, Any>>>> = _pendingSolicitations
 
     private val _userSolicitadosIds = mutableStateOf<Set<String>>(emptySet())
@@ -117,7 +119,21 @@ class MainViewModel : ViewModel() {
             .addOnSuccessListener { Log.d("Firestore", "Status de ocupação atualizado: $busy") }
     }
 
-    fun sendRideSolicitation(ride: Ride, rideId: String, passengerId: String) {
+    fun sendRideSolicitation(
+        ride: Ride,
+        rideId: String,
+        passengerId: String,
+        tempSelectedSeat: String
+    ) {
+        // CORREÇÃO: Usando os nomes corretos dos parâmetros
+        val solicitationData = hashMapOf(
+            "ride_id" to rideId,
+            "passenger_id" to passengerId, // Ajustado de userId para passengerId
+            "selected_seat" to tempSelectedSeat, // Ajustado de selectedSeat para tempSelectedSeat
+            "status" to "PENDING",
+            "timestamp" to FieldValue.serverTimestamp()
+        )
+
         val currentUser = _user.value
         if (currentUser?.is_busy == true) {
             Log.w("Ride", "Usuário já está ocupado")
@@ -131,6 +147,7 @@ class MainViewModel : ViewModel() {
             "ride_id" to rideRef,
             "passenger_ref" to passengerRef,
             "driver_ref" to ride.driver_ref,
+            "selected_seat" to tempSelectedSeat, // Incluído também no mapa enviado ao Firestore
             "status" to "PENDING",
             "timestamp" to com.google.firebase.Timestamp.now()
         )
@@ -161,6 +178,8 @@ class MainViewModel : ViewModel() {
 
     fun fetchActiveRide(userId: String) {
         val userRef = db.collection("USERS").document(userId)
+
+        // Escuta caronas onde o usuário é o MOTORISTA
         db.collection("CARONAS")
             .whereEqualTo("driver_ref", userRef)
             .whereIn("status", listOf("AVAILABLE", "ON_GOING"))
@@ -171,32 +190,90 @@ class MainViewModel : ViewModel() {
                     ride.id = doc.id
                     _activeRide.value = doc.id to ride
                     fetchSolicitationsForRide(doc.id)
+                } else {
+                    // Se não for motorista, busca caronas onde ele é PASSAGEIRO
+                    db.collection("CARONAS")
+                        .whereArrayContains("passenger_refs", userRef)
+                        .whereEqualTo("status", "AVAILABLE") // Ou ON_GOING
+                        .addSnapshotListener { passengerSnapshot, _ ->
+                            val pDoc = passengerSnapshot?.documents?.firstOrNull()
+                            if (pDoc != null) {
+                                val pRide = pDoc.toObject(Ride::class.java)!!
+                                pRide.id = pDoc.id
+                                _activeRide.value = pDoc.id to pRide
+                            } else {
+                                _activeRide.value = null
+                            }
+                        }
                 }
             }
     }
 
-    private fun fetchSolicitationsForRide(rideId: String) {
+    fun fetchSolicitationsForRide(rideId: String) {
         val rideRef = db.collection("CARONAS").document(rideId)
         db.collection("SOLICITACOES")
+            // Escuta tanto PENDING quanto ACCEPTED para garantir que o assento fique ocupado
             .whereEqualTo("ride_id", rideRef)
-            .whereEqualTo("status", "PENDING")
-            .addSnapshotListener { snapshot, _ ->
-                _pendingSolicitations.value = snapshot?.documents?.map { it.id to it.data!! } ?: emptyList()
+            .whereIn("status", listOf("PENDING", "ACCEPTED"))
+            .addSnapshotListener { snapshot, error ->
+                _pendingSolicitations.value =
+                    snapshot?.documents?.map { it.id to it.data!! } ?: emptyList()
+                if (error != null) {
+                    Log.e("Firestore", "Erro ao buscar solicitações", error)
+                    return@addSnapshotListener
+                }
+                // Mapeia os dados incluindo o campo 'selected_seat' necessário para o mapa
+                _pendingSolicitations.value =
+                    snapshot?.documents?.map { it.id to it.data!! } ?: emptyList()
             }
     }
 
     fun acceptPassenger(solicitationId: String, rideId: String, passengerId: String) {
         val batch = db.batch()
+
         val solicitationRef = db.collection("SOLICITACOES").document(solicitationId)
         val rideRef = db.collection("CARONAS").document(rideId)
         val passengerRef = db.collection("USERS").document(passengerId)
 
+        // 1. Atualiza a solicitação atual para ACEITA
         batch.update(solicitationRef, "status", "ACCEPTED")
-        batch.update(rideRef, "passenger_refs", com.google.firebase.firestore.FieldValue.arrayUnion(passengerRef))
-        batch.commit().addOnSuccessListener {
-            updateUserBusyStatus(passengerId, true)
-            Log.d("Firestore", "Passageiro aceito!")
-        }
+
+        // 2. Adiciona o passageiro à lista oficial da carona
+        batch.update(rideRef, "passenger_refs", FieldValue.arrayUnion(passengerRef))
+
+        // 3. Cria a coleção "caronas como caroneiro" vinculada ao usuário
+        val historyRef = passengerRef.collection("caronas como caroneiro").document(rideId)
+        batch.set(
+            historyRef, mapOf(
+                "ride_ref" to rideRef,
+                "timestamp" to FieldValue.serverTimestamp()
+            )
+        )
+
+        // 4. Marca o usuário como ocupado
+        batch.update(passengerRef, "is_busy", true)
+
+        // 5. Deleta outras solicitações pendentes deste usuário
+        db.collection("SOLICITACOES")
+            .whereEqualTo("passenger_ref", passengerRef)
+            .whereEqualTo("status", "PENDING")
+            .get()
+            .addOnSuccessListener { snapshot ->
+                val deleteBatch = db.batch() // Novo batch para as deleções
+                for (doc in snapshot.documents) {
+                    // Não deleta a que acabamos de aceitar (opcional, já que mudou status)
+                    if (doc.id != solicitationId) {
+                        deleteBatch.delete(doc.reference)
+                    }
+                }
+
+                // Primeiro executa o batch de aceitação
+                batch.commit().addOnSuccessListener {
+                    // Depois executa a limpeza das outras solicitações
+                    deleteBatch.commit()
+                    Log.d("Firestore", "Passageiro aceito e outras solicitações removidas!")
+                }
+            }
     }
 
     fun rejectPassenger(solicitationId: String, passengerId: String) {

@@ -173,13 +173,6 @@ fun RegisterPage(modifier: Modifier = Modifier, viewModel: MainViewModel) {
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Row(modifier = Modifier.offset(x = (-8).dp), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = rememberMe,
-                        onCheckedChange = { rememberMe = it }
-                    )
-                    Text("Lembre-se de mim", style = MaterialTheme.typography.labelMedium)
-                }
 
                 Spacer(modifier = Modifier.height(3.dp))
                 Button(
